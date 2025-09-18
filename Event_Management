@@ -1,0 +1,244 @@
+SQL Code
+
+-- User table for the single administrator
+CREATE TABLE Users (
+    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    organization VARCHAR(255),
+    password_hash VARCHAR(255) NOT NULL
+);
+
+-- Events table
+CREATE TABLE Events (
+    event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    event_name VARCHAR(255) NOT NULL,
+    event_date DATE NOT NULL,
+    event_time TIME NOT NULL,
+    location VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    FOREIGN KEY (user_id) REFERENCES Users(user_id)
+);
+
+-- Ticket types for each event
+CREATE TABLE TicketTypes (
+    ticket_type_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID NOT NULL,
+    ticket_name VARCHAR(255) NOT NULL,
+    price DECIMAL(10, 2) NOT NULL,
+    quantity_available INT NOT NULL,
+    FOREIGN KEY (event_id) REFERENCES Events(event_id)
+);
+
+-- Attendees (people who registered)
+CREATE TABLE Attendees (
+    attendee_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    attendee_name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL
+);
+
+-- Registrations, linking attendees to specific ticket purchases
+CREATE TABLE Registrations (
+    registration_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    attendee_id UUID NOT NULL,
+    ticket_type_id UUID NOT NULL,
+    purchase_date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    FOREIGN KEY (attendee_id) REFERENCES Attendees(attendee_id),
+    FOREIGN KEY (ticket_type_id) REFERENCES TicketTypes(ticket_type_id)
+);
+
+Frontend Code
+
+import streamlit as st
+import requests
+import json
+
+# Define the base URL of your Flask backend
+BACKEND_URL = "http://localhost:5000"
+
+# --- Page Structure and UI Elements ---
+
+st.title("Event Manager Dashboard")
+
+# Create two tabs for different functionalities
+tab1, tab2 = st.tabs(["Create Event", "View Dashboard"])
+
+with tab1:
+    st.header("Create a New Event")
+    with st.form("create_event_form"):
+        # User details (hardcoded for a single user)
+        user_name = "Event Manager"
+        user_email = "manager@example.com"
+        organization = "My Company"
+
+        # Event details input fields
+        event_name = st.text_input("Event Name", placeholder="Enter event name")
+        event_date = st.date_input("Event Date")
+        event_time = st.time_input("Event Time")
+        event_location = st.text_input("Location", placeholder="Enter event location")
+        event_description = st.text_area("Description", placeholder="A brief description of the event")
+
+        submit_button = st.form_submit_button("Create Event")
+
+        if submit_button:
+            if not all([event_name, event_date, event_time, event_location]):
+                st.error("Please fill in all required fields.")
+            else:
+                event_data = {
+                    "user_name": user_name,
+                    "user_email": user_email,
+                    "organization": organization,
+                    "event_name": event_name,
+                    "event_date": str(event_date),
+                    "event_time": str(event_time),
+                    "location": event_location,
+                    "description": event_description,
+                }
+                
+                # Make a POST request to the backend API
+                try:
+                    response = requests.post(f"{BACKEND_URL}/api/events", json=event_data)
+                    response.raise_for_status()  # Raise an HTTPError for bad responses (4xx or 5xx)
+                    st.success(f"Event '{event_name}' created successfully!")
+                    st.session_state.event_id = response.json().get("event_id")
+                    st.experimental_rerun()
+                except requests.exceptions.RequestException as e:
+                    st.error(f"Failed to create event. Error: {e}")
+
+with tab2:
+    st.header("Event Dashboard")
+
+    # Use session state to store the selected event ID
+    if "event_id" not in st.session_state:
+        st.session_state.event_id = None
+        
+    event_id_input = st.text_input("Enter Event ID to view dashboard:", placeholder="e.g., 123")
+    load_button = st.button("Load Dashboard")
+
+    if load_button and event_id_input:
+        st.session_state.event_id = int(event_id_input)
+    elif st.session_state.event_id:
+        st.write(f"Displaying data for Event ID: **{st.session_state.event_id}**")
+        
+    if st.session_state.event_id:
+        # Load dashboard data
+        try:
+            response = requests.get(f"{BACKEND_URL}/api/events/{st.session_state.event_id}/dashboard")
+            response.raise_for_status()
+            dashboard_data = response.json()
+
+            if dashboard_data:
+                # Display general event information
+                st.subheader("Event Details")
+                st.write(f"**Event Name:** {dashboard_data['event']['event_name']}")
+                st.write(f"**Date:** {dashboard_data['event']['event_date']} at {dashboard_data['event']['event_time']}")
+                st.write(f"**Location:** {dashboard_data['event']['location']}")
+
+                # Display analytics
+                st.subheader("Analytics")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric(label="Tickets Sold", value=dashboard_data['stats']['tickets_sold'] or 0)
+                with col2:
+                    st.metric(label="Total Revenue", value=f"${dashboard_data['stats']['total_revenue'] or 0:.2f}")
+
+                # Display attendees
+                st.subheader("Registered Attendees")
+                if dashboard_data['attendees']:
+                    st.table(dashboard_data['attendees'])
+                else:
+                    st.info("No attendees have registered yet.")
+            else:
+                st.warning("Dashboard data could not be loaded. Please check the Event ID.")
+        except requests.exceptions.RequestException as e:
+            st.error(f"Could not connect to the backend or fetch data. Error: {e}")
+
+Backend Code
+
+from flask import Flask, request, jsonify
+import psycopg2
+from datetime import datetime
+
+app = Flask(__name__)
+
+# --- Database Connection ---
+def get_db_connection():
+    conn = psycopg2.connect(
+        host="localhost",
+        database="Event_Management",
+        user="postgres",
+        password="Jeni@2002"
+    )
+    return conn
+
+# --- API Endpoints ---
+
+@app.route('/api/events', methods=['POST'])
+def create_event():
+    # User and Event Creation Logic
+    # Example: Receive JSON data, insert into 'events' and 'users' tables,
+    # and return a success message.
+    data = request.json
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Insert or update user (assuming a single user for simplicity)
+        cur.execute("INSERT INTO users (name, email, organization) VALUES (%s, %s, %s) ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name, organization=EXCLUDED.organization RETURNING user_id;", 
+                    (data['user_name'], data['user_email'], data['organization']))
+        user_id = cur.fetchone()[0]
+
+        cur.execute("INSERT INTO events (user_id, event_name, event_date, event_time, location, description) VALUES (%s, %s, %s, %s, %s, %s) RETURNING event_id;",
+                    (user_id, data['event_name'], data['event_date'], data['event_time'], data['location'], data['description']))
+        event_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"message": "Event created successfully", "event_id": event_id}), 201
+    except (Exception, psycopg2.DatabaseError) as error:
+        return jsonify({"error": str(error)}), 500
+
+@app.route('/api/events/<int:event_id>/dashboard', methods=['GET'])
+def get_dashboard_data(event_id):
+    # Dashboard and Reporting Logic
+    # Example: Query the database to get real-time analytics
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Get event details
+        cur.execute("SELECT * FROM events WHERE event_id = %s;", (event_id,))
+        event = cur.fetchone()
+        
+        # Get total tickets sold and total revenue
+        cur.execute("SELECT SUM(quantity_purchased) AS tickets_sold, SUM(total_price) AS total_revenue FROM registrations WHERE event_id = %s;", (event_id,))
+        stats = cur.fetchone()
+        
+        # Get attendee list with ticket type
+        cur.execute("""
+            SELECT r.attendee_name, r.attendee_email, t.ticket_type
+            FROM registrations r
+            JOIN tickets t ON r.ticket_id = t.ticket_id
+            WHERE r.event_id = %s
+            ORDER BY t.ticket_type, r.attendee_name;
+        """, (event_id,))
+        attendees = cur.fetchall()
+
+        cur.close()
+        conn.close()
+
+        # Format and return data
+        dashboard_data = {
+            "event": event,
+            "stats": {"tickets_sold": stats[0], "total_revenue": stats[1]},
+            "attendees": attendees
+        }
+        return jsonify(dashboard_data), 200
+    except (Exception, psycopg2.DatabaseError) as error:
+        return jsonify({"error": str(error)}), 500
+
+# You would add more routes for ticket management, registration, etc.
+if __name__ == '__main__':
+    app.run(debug=True)
